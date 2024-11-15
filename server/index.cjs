@@ -22,7 +22,8 @@ const pipeStream = (path, writeStream) =>
     new Promise(resolve => {
         const readStream = fse.createReadStream(path);
         readStream.on("end", () => {
-            // fse.unlinkSync(path);
+            //删除上传完的切片
+            fse.unlinkSync(path);
             resolve();
         });
         readStream.pipe(writeStream);
@@ -48,7 +49,7 @@ const mergeFileChunk = async (filePath, filename, size) => {
         )
     );
     // 合并后删除保存切片的目录
-    // fse.rmdirSync(chunkDir);
+    fse.rmdirSync(chunkDir);
 };
 server.on("request", async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");

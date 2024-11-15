@@ -2,6 +2,22 @@
   <div>
     <input type="file" @change="handleFileChange" />
     <el-button @click="handleUpload">upload</el-button>
+    <p>总进度</p>
+    <el-progress :percentage="uploadPercentage" style="width: 50%" />
+    <p>分进度</p>
+    <el-table :data="data" style="width: 50%; height: 700px">
+      <el-table-column prop="hash" label="chunkHash" width="180" />
+      <el-table-column label="size(kb)" width="180">
+        <template #default="{ row }">
+          <div>{{ row.size }}</div>
+        </template>
+      </el-table-column>
+      <el-table-column label="percentage">
+        <template #default="{ row }">
+          <el-progress :percentage="row.percentage" />
+        </template>
+      </el-table-column>
+    </el-table>
   </div>
 </template>
 <script>
@@ -13,10 +29,43 @@ export default {
         file: null,
       },
       data: [],
+      tableData: [
+        {
+          date: "2016-05-03",
+          name: "Tom",
+          address: "No. 189, Grove St, Los Angeles",
+        },
+        {
+          date: "2016-05-02",
+          name: "Tom",
+          address: "No. 189, Grove St, Los Angeles",
+        },
+        {
+          date: "2016-05-04",
+          name: "Tom",
+          address: "No. 189, Grove St, Los Angeles",
+        },
+        {
+          date: "2016-05-01",
+          name: "Tom",
+          address: "No. 189, Grove St, Los Angeles",
+        },
+      ],
     };
   },
   mounted() {},
+  computed: {
+    uploadPercentage() {
+      // debugger;
+      if (!this.container.file || !this.data.length) return 0;
+      const loaded = this.data
+        .map((item) => item.size * item.percentage)
+        .reduce((acc, cur) => acc + cur);
+      console.log("🚀 ~ uploadPercentage ~ loaded:", loaded);
 
+      return parseInt((loaded / this.container.file.size).toFixed(2));
+    },
+  },
   methods: {
     handleFileChange(e) {
       const [file] = e.target.files;
@@ -29,14 +78,25 @@ export default {
       const fileChunkList = this.cutFile(this.container.file);
       this.data = fileChunkList.map(({ file }, index) => ({
         chunk: file,
+        index,
+        size: SIZE,
+        percentage: 0,
         hash: this.container.file.name + "-" + index,
       }));
       await this.uploadChunkList();
     },
 
-    request({ url, methods = "post", headers = {}, data, requestList }) {
+    request({
+      url,
+      methods = "post",
+      headers = {},
+      data,
+      requestList,
+      onProgress = (e) => e,
+    }) {
       return new Promise((resolve) => {
         let xhr = new XMLHttpRequest();
+        xhr.upload.onprogress = onProgress;
         xhr.open(methods, url);
         Object.keys(headers).forEach((item) =>
           xhr.setRequestHeader(item, headers[item])
@@ -63,18 +123,19 @@ export default {
     //上传切片文件
     async uploadChunkList() {
       const requestList = this.data
-        .map(({ chunk, hash }) => {
+        .map(({ chunk, hash, index }) => {
           const formData = new FormData();
           formData.append("chunk", chunk);
           formData.append("hash", hash);
           formData.append("filename", this.container.file.name);
 
-          return { formData };
+          return { formData, index };
         })
-        .map(({ formData }) =>
+        .map(({ formData, index }) =>
           this.request({
             url: "http://localhost:5174",
             data: formData,
+            onProgress: this.createProgressHandler(this.data[index]),
           })
         );
       await Promise.all(requestList);
@@ -93,6 +154,11 @@ export default {
           size: SIZE,
         }),
       });
+    },
+    createProgressHandler(item) {
+      return (e) => {
+        item.percentage = parseInt(String((e.loaded / e.total) * 100));
+      };
     },
   },
 };
