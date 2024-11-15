@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # testUpload
 
 This template should help get you started developing with Vue 3 in Vite.
@@ -27,3 +28,7 @@ pnpm dev
 ```sh
 pnpm build
 ```
+=======
+# fileload
+大文件上传练习
+>>>>>>> 52ebb1576b9f342ea8826695e107f63ab5f263ea
