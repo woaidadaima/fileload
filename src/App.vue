@@ -2,6 +2,8 @@
   <div>
     <input type="file" @change="handleFileChange" />
     <el-button @click="handleUpload">upload</el-button>
+    <p>hash进度</p>
+    <el-progress :percentage="hashPercentage" style="width: 50%" />
     <p>总进度</p>
     <el-progress :percentage="uploadPercentage" style="width: 50%" />
     <p>分进度</p>
@@ -29,6 +31,7 @@ export default {
         file: null,
       },
       data: [],
+      hashPercentage: 0,
     };
   },
   mounted() {},
@@ -51,16 +54,48 @@ export default {
       this.container.file = file;
       console.log("🚀 ~ handleFileChange ~ e:", file);
     },
+    calculateHash(fileChunkList) {
+      return new Promise((resolve) => {
+        // 添加 worker 属性
+        this.container.worker = new Worker("/worker.js");
+        this.container.worker.postMessage({ fileChunkList });
+        this.container.worker.onmessage = (e) => {
+          const { percentage, hash } = e.data;
+          this.hashPercentage = percentage;
+          if (hash) {
+            resolve(hash);
+          }
+        };
+      });
+    },
+    async verifyUpload(filename, fileHash) {
+      const { data } = await this.request({
+        url: "http://localhost:3000/verify",
+        headers: {
+          "content-type": "application/json",
+        },
+        data: JSON.stringify({
+          filename,
+          fileHash,
+        }),
+      });
+      return JSON.parse(data);
+    },
 
     async handleUpload() {
       if (!this.container.file) return;
       const fileChunkList = this.cutFile(this.container.file);
+      // 通过worker计算文件hash
+      this.container.hash = await this.calculateHash(fileChunkList);
+      const { shouldUpload } = await this.verifyUpload();
       this.data = fileChunkList.map(({ file }, index) => ({
+        fileHash: this.container.hash,
+        hash: this.container.hash + "-" + index,
         chunk: file,
         index,
         size: SIZE,
         percentage: 0,
-        hash: this.container.file.name + "-" + index,
+        // hash: this.container.file.name + "-" + index,
       }));
       await this.uploadChunkList();
     },
@@ -102,12 +137,12 @@ export default {
     //上传切片文件
     async uploadChunkList() {
       const requestList = this.data
-        .map(({ chunk, hash, index }) => {
+        .map(({ chunk, hash, index, fileHash }) => {
           const formData = new FormData();
           formData.append("chunk", chunk);
-          formData.append("hash", hash);
+          formData.append("fileHash", fileHash);
           formData.append("filename", this.container.file.name);
-
+          formData.append("hash", hash);
           return { formData, index };
         })
         .map(({ formData, index }) =>
@@ -130,6 +165,7 @@ export default {
         },
         data: JSON.stringify({
           filename: this.container.file.name,
+          fileHash: this.container.hash,
           size: SIZE,
         }),
       });

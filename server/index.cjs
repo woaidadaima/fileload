@@ -1,15 +1,25 @@
 //1. 导入 http 模块
 const http = require("http");
-const fse = require('fs-extra')
-const path = require('path')
-const multiparty = require('multiparty')
+const fse = require("fs-extra");
+const path = require("path");
+const multiparty = require("multiparty");
 const server = http.createServer();
 // 大文件存储目录
 const UPLOAD_DIR = path.resolve(__dirname, "..", "target");
-const resolvePost = req =>
-    new Promise(resolve => {
+// 提取后缀名
+// get file extension
+const extractExt = (filename) =>
+    filename.slice(filename.lastIndexOf("."), filename.length);
+// 创建临时文件夹用于临时存储 chunk
+// 添加 chunkDir 前缀与文件名做区分
+// create a directory for temporary storage of chunks
+// add the 'chunkDir' prefix to distinguish it from the chunk name
+const getChunkDir = (fileHash) =>
+    path.resolve(UPLOAD_DIR, `chunkDir_${fileHash}`);
+const resolvePost = (req) =>
+    new Promise((resolve) => {
         let chunk = "";
-        req.on("data", data => {                                                                                                                                
+        req.on("data", (data) => {
             chunk = data;
         });
         req.on("end", () => {
@@ -19,19 +29,20 @@ const resolvePost = req =>
 
 // 写入文件流
 const pipeStream = (path, writeStream) =>
-    new Promise(resolve => {
+    new Promise((resolve) => {
         const readStream = fse.createReadStream(path);
         readStream.on("end", () => {
             //删除上传完的切片
-            fse.unlinkSync(path);
+            //   fse.unlinkSync(path);
             resolve();
         });
         readStream.pipe(writeStream);
     });
 
 // 合并切片
-const mergeFileChunk = async (filePath, filename, size) => {
-    const chunkDir = path.resolve(UPLOAD_DIR, 'chunkDir' , filename);
+const mergeFileChunk = async (filePath, fileHash, size) => {
+    const chunkDir = getChunkDir(fileHash);
+    console.log("🚀 ~ mergeFileChunk ~ chunkDir:", chunkDir);
     const chunkPaths = await fse.readdir(chunkDir);
     // 根据切片下标进行排序
     // 否则直接读取目录的获得的顺序会错乱
@@ -49,7 +60,7 @@ const mergeFileChunk = async (filePath, filename, size) => {
         )
     );
     // 合并后删除保存切片的目录
-    fse.rmdirSync(chunkDir);
+    //   fse.rmdirSync(chunkDir);
 };
 server.on("request", async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -61,28 +72,67 @@ server.on("request", async (req, res) => {
     }
     if (req.url === "/merge") {
         const data = await resolvePost(req);
-        const { filename, size } = data;
-        const filePath = path.resolve(UPLOAD_DIR, `${filename}`);
-        await mergeFileChunk(filePath, filename,size);
+        const { filename, size, fileHash } = data;
+        const ext = extractExt(filename);
+        console.log("🚀 ~ server.on ~ ext:", ext, fileHash);
+        const filePath = path.resolve(UPLOAD_DIR, `${fileHash}${ext}`);
+        await mergeFileChunk(filePath, fileHash, size);
         res.end(
             JSON.stringify({
                 code: 0,
-                message: "file merged success"
+                message: "file merged success",
             })
         );
     }
+    if (req.url === '/verify') {
+        const data = await resolvePost(req)
+        const { fileHash, filename } = data;
+        const ext = extractExt(filename)
+        const filePath = path.resolve(UPLOAD_DIR, `${fileHash}${ext}`);
+        if (fse.existsSync(filePath)) {
+            res.end(JSON.stringify(
+                {
+                    shouldUpload: false
+                }
+            ))
+        } else {
+            res.end(JSON.stringify(
+                {
+                    shouldUpload: true
+                }
+            ))
+        }
+    }
     const multipart = new multiparty.Form();
     multipart.parse(req, async (err, fields, files) => {
-        console.log("🚀 ~ multipart.parse ~  fields, files:", fields, files)
+        console.log("🚀 ~ multipart.parse ~  fields, files:", fields, files);
         if (err) {
             return;
         }
         const [chunk] = files.chunk;
         const [hash] = fields.hash;
         const [filename] = fields.filename;
-        // 创建临时文件夹用于临时存储 chunk
-        // 添加 chunkDir 前缀与文件名做区分
-        const chunkDir = path.resolve(UPLOAD_DIR, 'chunkDir',  filename);
+        const [fileHash] = fields.fileHash;
+        const filePath = path.resolve(
+            UPLOAD_DIR,
+            `${fileHash}${extractExt(filename)}`
+        );
+        const chunkDir = getChunkDir(fileHash);
+        const chunkPath = path.resolve(chunkDir, hash);
+
+        // 文件存在直接返回
+        // return if file is exists
+        if (fse.existsSync(filePath)) {
+            res.end("file exist");
+            return;
+        }
+
+        // 切片存在直接返回
+        // return if chunk is exists
+        if (fse.existsSync(chunkPath)) {
+            res.end("chunk exist");
+            return;
+        }
 
         if (!fse.existsSync(chunkDir)) {
             await fse.mkdirs(chunkDir);
@@ -90,7 +140,7 @@ server.on("request", async (req, res) => {
 
         // fs-extra 的 rename 方法 windows 平台会有权限问题
         // @see https://github.com/meteor/meteor/issues/7852#issuecomment-255767835
-        await fse.move(chunk.path, `${chunkDir}/${hash}`);
+        await fse.move(chunk.path, path.resolve(chunkDir, hash));
         res.end("received file chunk");
     });
 });
