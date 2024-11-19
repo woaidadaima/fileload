@@ -1,11 +1,28 @@
 <template>
   <div>
-    <input type="file" @change="handleFileChange" />
-    <el-button @click="handleUpload">upload</el-button>
+    <input
+      type="file"
+      @change="handleFileChange"
+      :disabled="status !== Status.wait"
+    />
+    <el-button @click="handleUpload" :disabled="uploadDisabled"
+      >upload</el-button
+    >
+
+    <el-button @click="handleResume" v-if="status === Status.pause"
+      >resume</el-button
+    >
+    <el-button
+      @click="handlePause"
+      v-else
+      :disabled="status !== Status.uploading || !container.hash"
+      >pause</el-button
+    >
+
     <p>hash进度</p>
     <el-progress :percentage="hashPercentage" style="width: 50%" />
     <p>总进度</p>
-    <el-progress :percentage="uploadPercentage" style="width: 50%" />
+    <el-progress :percentage="fakeUploadPercentage" style="width: 50%" />
     <p>分进度</p>
     <el-table :data="data" style="width: 50%; height: 700px">
       <el-table-column prop="hash" label="chunkHash" width="180" />
@@ -24,18 +41,35 @@
 </template>
 <script>
 const SIZE = 100 * 1024 * 1024;
+const Status = {
+  wait: "wait",
+  pause: "pause",
+  uploading: "uploading",
+};
+
 export default {
   data() {
     return {
+      Status,
       container: {
         file: null,
       },
       data: [],
       hashPercentage: 0,
+      isPause: false,
+      requestList: [],
+      status: Status.wait,
+      fakeUploadPercentage: 0,
     };
   },
   mounted() {},
   computed: {
+    uploadDisabled() {
+      return (
+        !this.container.file ||
+        [Status.pause, Status.uploading].includes(this.status)
+      );
+    },
     uploadPercentage() {
       // debugger;
       if (!this.container.file || !this.data.length) return 0;
@@ -61,7 +95,7 @@ export default {
         this.container.worker.postMessage({ fileChunkList });
         this.container.worker.onmessage = (e) => {
           const { percentage, hash } = e.data;
-          this.hashPercentage = percentage;
+          this.hashPercentage = percentage.toFixed(2);
           if (hash) {
             resolve(hash);
           }
@@ -84,15 +118,17 @@ export default {
 
     async handleUpload() {
       if (!this.container.file) return;
+      this.status = Status.uploading;
       const fileChunkList = this.cutFile(this.container.file);
       // 通过worker计算文件hash
       this.container.hash = await this.calculateHash(fileChunkList);
-      const { shouldUpload } = await this.verifyUpload(
+      const { shouldUpload, uploadedList } = await this.verifyUpload(
         this.container.file.name,
         this.container.hash
       );
       if (!shouldUpload) {
-        this.$message.success("skip upload:file upload success");
+        this.$message.success("秒传成功");
+        this.status = Status.wait;
         return;
       }
       this.data = fileChunkList.map(({ file }, index) => ({
@@ -101,10 +137,9 @@ export default {
         chunk: file,
         index,
         size: SIZE,
-        percentage: 0,
-        // hash: this.container.file.name + "-" + index,
+        percentage: uploadedList.includes(index) ? 100 : 0,
       }));
-      await this.uploadChunkList();
+      await this.uploadChunkList(uploadedList);
     },
 
     request({
@@ -125,10 +160,18 @@ export default {
         xhr.send(data);
         xhr.onload = (e) => {
           console.log("🚀 ~ returnnewPromise ~ e:", e);
+          if (requestList) {
+            console.log("🚀 ~ returnnewPromise ~ requestList:", requestList);
+            // 删除已经上传成功的切片
+            let xhrIndex = requestList.findIndex((item) => item === xhr);
+            requestList.splice(xhrIndex, 1);
+          }
           resolve({
             data: e.target.response,
           });
         };
+        // 暴露当前 xhr 给外部
+        requestList?.push(xhr);
       });
     },
     //对文件切片
@@ -142,8 +185,9 @@ export default {
       return fileChunkList;
     },
     //上传切片文件
-    async uploadChunkList() {
+    async uploadChunkList(uploadedList = []) {
       const requestList = this.data
+        .filter(({ hash }) => !uploadedList.includes(hash))
         .map(({ chunk, hash, index, fileHash }) => {
           const formData = new FormData();
           formData.append("chunk", chunk);
@@ -157,10 +201,14 @@ export default {
             url: "http://localhost:5174",
             data: formData,
             onProgress: this.createProgressHandler(this.data[index]),
+            requestList: this.requestList,
           })
         );
       await Promise.all(requestList);
-      await this.mergeChunk();
+      // 之前上传的切片数量 + 本次上传的切片数量 = 所有切片数量时合并切片
+      if (uploadedList.length + requestList.length === this.data.length) {
+        await this.mergeChunk();
+      }
     },
 
     //通知服务端合并切片
@@ -176,11 +224,33 @@ export default {
           size: SIZE,
         }),
       });
+      this.$message.success("upload success, check /target directory");
+      this.status = Status.wait;
     },
     createProgressHandler(item) {
       return (e) => {
         item.percentage = parseInt(String((e.loaded / e.total) * 100));
       };
+    },
+    handlePause() {
+      this.status = Status.pause;
+      this.requestList.forEach((xhr) => xhr?.abort());
+      this.requestList = [];
+    },
+    async handleResume() {
+      this.status = Status.uploading;
+      const { uploadedList } = await this.verifyUpload(
+        this.container.file.name,
+        this.container.hash
+      );
+      await this.uploadChunkList(uploadedList);
+    },
+  },
+  watch: {
+    uploadPercentage(now) {
+      if (now > this.fakeUploadPercentage) {
+        this.fakeUploadPercentage = now;
+      }
     },
   },
 };

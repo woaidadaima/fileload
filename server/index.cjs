@@ -12,10 +12,15 @@ const extractExt = (filename) =>
     filename.slice(filename.lastIndexOf("."), filename.length);
 // 创建临时文件夹用于临时存储 chunk
 // 添加 chunkDir 前缀与文件名做区分
-// create a directory for temporary storage of chunks
-// add the 'chunkDir' prefix to distinguish it from the chunk name
 const getChunkDir = (fileHash) =>
     path.resolve(UPLOAD_DIR, `chunkDir_${fileHash}`);
+
+// 返回已上传的所有切片名
+const createUploadedList = async fileHash =>
+    fse.existsSync(getChunkDir(fileHash))
+      ? await fse.readdir(getChunkDir(fileHash))
+      : [];
+
 const resolvePost = (req) =>
     new Promise((resolve) => {
         let chunk = "";
@@ -99,7 +104,8 @@ server.on("request", async (req, res) => {
         } else {
             res.end(JSON.stringify(
                 {
-                    shouldUpload: true
+                    shouldUpload: true,
+                    uploadedList: await createUploadedList(fileHash)
                 }
             ))
         }
