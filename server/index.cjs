@@ -33,7 +33,7 @@ const pipeStream = (path, writeStream) =>
         const readStream = fse.createReadStream(path);
         readStream.on("end", () => {
             //删除上传完的切片
-            //   fse.unlinkSync(path);
+              fse.unlinkSync(path);
             resolve();
         });
         readStream.pipe(writeStream);
@@ -60,7 +60,7 @@ const mergeFileChunk = async (filePath, fileHash, size) => {
         )
     );
     // 合并后删除保存切片的目录
-    //   fse.rmdirSync(chunkDir);
+      fse.rmdirSync(chunkDir);
 };
 server.on("request", async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -87,6 +87,7 @@ server.on("request", async (req, res) => {
     if (req.url === '/verify') {
         const data = await resolvePost(req)
         const { fileHash, filename } = data;
+        console.log("🚀 ~ server.on ~ fileHash, filename:", fileHash, filename)
         const ext = extractExt(filename)
         const filePath = path.resolve(UPLOAD_DIR, `${fileHash}${ext}`);
         if (fse.existsSync(filePath)) {

@@ -70,7 +70,7 @@ export default {
     },
     async verifyUpload(filename, fileHash) {
       const { data } = await this.request({
-        url: "http://localhost:3000/verify",
+        url: "http://localhost:5174/verify",
         headers: {
           "content-type": "application/json",
         },
@@ -87,7 +87,14 @@ export default {
       const fileChunkList = this.cutFile(this.container.file);
       // 通过worker计算文件hash
       this.container.hash = await this.calculateHash(fileChunkList);
-      const { shouldUpload } = await this.verifyUpload();
+      const { shouldUpload } = await this.verifyUpload(
+        this.container.file.name,
+        this.container.hash
+      );
+      if (!shouldUpload) {
+        this.$message.success("skip upload:file upload success");
+        return;
+      }
       this.data = fileChunkList.map(({ file }, index) => ({
         fileHash: this.container.hash,
         hash: this.container.hash + "-" + index,
