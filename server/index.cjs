@@ -110,6 +110,15 @@ server.on("request", async (req, res) => {
             ))
         }
     }
+    if(req.url === '/delete'){
+        await fse.remove(path.resolve(UPLOAD_DIR));
+        res.end(
+          JSON.stringify({
+            code: 200,
+            message: "file delete success"
+          })
+        );
+    }
     const multipart = new multiparty.Form();
     multipart.parse(req, async (err, fields, files) => {
         console.log("🚀 ~ multipart.parse ~  fields, files:", fields, files);

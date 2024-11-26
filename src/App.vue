@@ -18,7 +18,7 @@
       :disabled="status !== Status.uploading || !container.hash"
       >pause</el-button
     >
-
+    <el-button @click="handleDelete">delete</el-button>
     <p>hash进度</p>
     <el-progress :percentage="hashPercentage" style="width: 50%" />
     <p>总进度</p>
@@ -41,6 +41,7 @@
 </template>
 <script>
 const SIZE = 100 * 1024 * 1024;
+const MAX_CONCURRENT = 3;
 const Status = {
   wait: "wait",
   pause: "pause",
@@ -71,12 +72,17 @@ export default {
       );
     },
     uploadPercentage() {
-      // debugger;
       if (!this.container.file || !this.data.length) return 0;
+      console.log("🚀 ~ uploadPercentage ~ this.data:", this.data);
       const loaded = this.data
         .map((item) => item.size * item.percentage)
         .reduce((acc, cur) => acc + cur);
-      console.log("🚀 ~ uploadPercentage ~ loaded:", loaded);
+      console.log(
+        "🚀 ~ uploadPercentage ~ loaded:",
+        loaded,
+        parseInt((loaded / this.container.file.size).toFixed(2)),
+        this.container.file.size
+      );
 
       return parseInt((loaded / this.container.file.size).toFixed(2));
     },
@@ -95,7 +101,7 @@ export default {
         this.container.worker.postMessage({ fileChunkList });
         this.container.worker.onmessage = (e) => {
           const { percentage, hash } = e.data;
-          this.hashPercentage = percentage.toFixed(2);
+          this.hashPercentage = Number(percentage.toFixed(2));
           if (hash) {
             resolve(hash);
           }
@@ -119,6 +125,11 @@ export default {
     async handleUpload() {
       if (!this.container.file) return;
       this.status = Status.uploading;
+      //将已完成的进度条清空,清空containerHash
+      this.fakeUploadPercentage = 0;
+      this.hashPercentage = 0;
+      this.data = [];
+      this.container.hash = "";
       const fileChunkList = this.cutFile(this.container.file);
       // 通过worker计算文件hash
       this.container.hash = await this.calculateHash(fileChunkList);
@@ -127,6 +138,7 @@ export default {
         this.container.hash
       );
       if (!shouldUpload) {
+        this.fakeUploadPercentage = 100;
         this.$message.success("秒传成功");
         this.status = Status.wait;
         return;
@@ -136,7 +148,7 @@ export default {
         hash: this.container.hash + "-" + index,
         chunk: file,
         index,
-        size: SIZE,
+        size: file.size,
         percentage: uploadedList.includes(index) ? 100 : 0,
       }));
       await this.uploadChunkList(uploadedList);
@@ -184,8 +196,12 @@ export default {
       }
       return fileChunkList;
     },
-    //上传切片文件
+
+    // 上传切片文件限制并发请求
     async uploadChunkList(uploadedList = []) {
+      const pool = []; // 并发池
+
+      // 筛选需要上传的切片
       const requestList = this.data
         .filter(({ hash }) => !uploadedList.includes(hash))
         .map(({ chunk, hash, index, fileHash }) => {
@@ -195,21 +211,65 @@ export default {
           formData.append("filename", this.container.file.name);
           formData.append("hash", hash);
           return { formData, index };
-        })
-        .map(({ formData, index }) =>
-          this.request({
-            url: "http://localhost:5174",
-            data: formData,
-            onProgress: this.createProgressHandler(this.data[index]),
-            requestList: this.requestList,
-          })
-        );
-      await Promise.all(requestList);
-      // 之前上传的切片数量 + 本次上传的切片数量 = 所有切片数量时合并切片
+        });
+
+      // 上传切片，限制并发数量
+      for (const { formData, index } of requestList) {
+        // 创建上传任务
+        const task = this.request({
+          url: "http://localhost:5174",
+          data: formData,
+          onProgress: this.createProgressHandler(this.data[index]),
+          requestList: this.requestList,
+        }).then((res) => {
+          // 任务完成后从并发池中移除
+          pool.splice(pool.indexOf(task), 1);
+          return res;
+        });
+
+        // 将任务加入并发池和结果集
+        pool.push(task);
+
+        // 如果并发池已满，等待任意一个任务完成
+        if (pool.length >= MAX_CONCURRENT) {
+          await Promise.race(pool);
+        }
+      }
+
+      // 等待剩余任务完成
+      await Promise.all(pool);
+
+      // 检查是否需要合并切片
       if (uploadedList.length + requestList.length === this.data.length) {
         await this.mergeChunk();
       }
     },
+    //上传切片文件没限制并发请求
+    // async uploadChunkList(uploadedList = []) {
+    //   const requestList = this.data
+    //     .filter(({ hash }) => !uploadedList.includes(hash))
+    //     .map(({ chunk, hash, index, fileHash }) => {
+    //       const formData = new FormData();
+    //       formData.append("chunk", chunk);
+    //       formData.append("fileHash", fileHash);
+    //       formData.append("filename", this.container.file.name);
+    //       formData.append("hash", hash);
+    //       return { formData, index };
+    //     })
+    //     .map(({ formData, index }) =>
+    //       this.request({
+    //         url: "http://localhost:5174",
+    //         data: formData,
+    //         onProgress: this.createProgressHandler(this.data[index]),
+    //         requestList: this.requestList,
+    //       })
+    //     );
+    //   await Promise.all(requestList);
+    //   // 之前上传的切片数量 + 本次上传的切片数量 = 所有切片数量时合并切片
+    //   if (uploadedList.length + requestList.length === this.data.length) {
+    //     await this.mergeChunk();
+    //   }
+    // },
 
     //通知服务端合并切片
     async mergeChunk() {
@@ -230,12 +290,16 @@ export default {
     createProgressHandler(item) {
       return (e) => {
         item.percentage = parseInt(String((e.loaded / e.total) * 100));
+        console.log("🚀 ~ return ~ item.percentage:", item.percentage);
       };
     },
     handlePause() {
       this.status = Status.pause;
       this.requestList.forEach((xhr) => xhr?.abort());
       this.requestList = [];
+      if (this.container.worker) {
+        this.container.worker.onmessage = null;
+      }
     },
     async handleResume() {
       this.status = Status.uploading;
@@ -245,11 +309,23 @@ export default {
       );
       await this.uploadChunkList(uploadedList);
     },
+    async handleDelete() {
+      const { data } = await this.request({
+        url: "http://localhost:5174/delete",
+      });
+      if (JSON.parse(data).code === 200) {
+        this.$message.success("删除文件成功");
+      }
+    },
   },
   watch: {
     uploadPercentage(now) {
       if (now > this.fakeUploadPercentage) {
         this.fakeUploadPercentage = now;
+        console.log(
+          "🚀 ~ uploadPercentage ~ this.fakeUploadPercentage:",
+          this.fakeUploadPercentage
+        );
       }
     },
   },
