@@ -1,34 +1,19 @@
-<<<<<<< HEAD
-# testUpload
-
-This template should help get you started developing with Vue 3 in Vite.
-
-## Recommended IDE Setup
-
-[VSCode](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
-
-## Customize configuration
-
-See [Vite Configuration Reference](https://vite.dev/config/).
-
-## Project Setup
-
-```sh
-pnpm install
-```
-
-### Compile and Hot-Reload for Development
-
-```sh
-pnpm dev
-```
-
-### Compile and Minify for Production
-
-```sh
-pnpm build
-```
-=======
 # fileload
 大文件上传练习
->>>>>>> 52ebb1576b9f342ea8826695e107f63ab5f263ea
+# 前端
+1. Vue3 + vite
+2. Element-ui
+3. Blob#slice 实现文件切片
+4. FileReader + WebWorker + spark-md5 生成文件 hash
+5. xhr 发送 formData
+# 前端启动
+1. 安装依赖:pnpm install
+2. 启动项目:pnpm run dev
+3. 打包:pnpm run build
+
+# 后端
+1. node@20.15.0
+2. multiparty 处理 formData
+# 后端文件启动脚本
+1. cd 进入server目录
+2. 安装了nodemon，使用 nodemon ./index.js，否则 node ./index.js

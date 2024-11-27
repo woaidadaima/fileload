@@ -1,9 +1,11 @@
-//1. 导入 http 模块
-const http = require("http");
-const fse = require("fs-extra");
-const path = require("path");
-const multiparty = require("multiparty");
-const server = http.createServer();
+import fse from 'fs-extra'
+import path from 'path'
+import multiparty from 'multiparty'
+import { fileURLToPath } from "url";
+
+// 模拟 __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 // 大文件存储目录
 const UPLOAD_DIR = path.resolve(__dirname, "..", "target");
 // 提取后缀名
@@ -67,29 +69,48 @@ const mergeFileChunk = async (filePath, fileHash, size) => {
     // 合并后删除保存切片的目录
       fse.rmdirSync(chunkDir);
 };
-server.on("request", async (req, res) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Headers", "*");
-    if (req.method === "OPTIONS") {
-        res.status = 200;
-        res.end();
-        return;
+class Controller{
+    async handleFormData(req,res){
+        const multipart = new multiparty.Form();
+        multipart.parse(req, async (err, fields, files) => {
+            console.log("🚀 ~ multipart.parse ~  fields, files:", fields, files);
+            if (err) {
+                return;
+            }
+            const [chunk] = files.chunk;
+            const [hash] = fields.hash;
+            const [filename] = fields.filename;
+            const [fileHash] = fields.fileHash;
+            const filePath = path.resolve(
+                UPLOAD_DIR,
+                `${fileHash}${extractExt(filename)}`
+            );
+            const chunkDir = getChunkDir(fileHash);
+            const chunkPath = path.resolve(chunkDir, hash);
+        
+            // 文件存在直接返回
+            if (fse.existsSync(filePath)) {
+                res.end("file exist");
+                return;
+            }
+        
+            // 切片存在直接返回
+            if (fse.existsSync(chunkPath)) {
+                res.end("chunk exist");
+                return;
+            }
+        
+            if (!fse.existsSync(chunkDir)) {
+                await fse.mkdirs(chunkDir);
+            }
+        
+            // fs-extra 的 rename 方法 windows 平台会有权限问题
+            // @see https://github.com/meteor/meteor/issues/7852#issuecomment-255767835
+            await fse.move(chunk.path, path.resolve(chunkDir, hash));
+            res.end("received file chunk");
+        });
     }
-    if (req.url === "/merge") {
-        const data = await resolvePost(req);
-        const { filename, size, fileHash } = data;
-        const ext = extractExt(filename);
-        console.log("🚀 ~ server.on ~ ext:", ext, fileHash);
-        const filePath = path.resolve(UPLOAD_DIR, `${fileHash}${ext}`);
-        await mergeFileChunk(filePath, fileHash, size);
-        res.end(
-            JSON.stringify({
-                code: 0,
-                message: "file merged success",
-            })
-        );
-    }
-    if (req.url === '/verify') {
+    async handleVerify(req,res){
         const data = await resolvePost(req)
         const { fileHash, filename } = data;
         console.log("🚀 ~ server.on ~ fileHash, filename:", fileHash, filename)
@@ -110,7 +131,7 @@ server.on("request", async (req, res) => {
             ))
         }
     }
-    if(req.url === '/delete'){
+    async handleDelete(req,res){
         await fse.remove(path.resolve(UPLOAD_DIR));
         res.end(
           JSON.stringify({
@@ -119,46 +140,19 @@ server.on("request", async (req, res) => {
           })
         );
     }
-    const multipart = new multiparty.Form();
-    multipart.parse(req, async (err, fields, files) => {
-        console.log("🚀 ~ multipart.parse ~  fields, files:", fields, files);
-        if (err) {
-            return;
-        }
-        const [chunk] = files.chunk;
-        const [hash] = fields.hash;
-        const [filename] = fields.filename;
-        const [fileHash] = fields.fileHash;
-        const filePath = path.resolve(
-            UPLOAD_DIR,
-            `${fileHash}${extractExt(filename)}`
+    async handleMerge(req,res){
+        const data = await resolvePost(req);
+        const { filename, size, fileHash } = data;
+        const ext = extractExt(filename);
+        console.log("🚀 ~ server.on ~ ext:", ext, fileHash);
+        const filePath = path.resolve(UPLOAD_DIR, `${fileHash}${ext}`);
+        await mergeFileChunk(filePath, fileHash, size);
+        res.end(
+            JSON.stringify({
+                code: 0,
+                message: "file merged success",
+            })
         );
-        const chunkDir = getChunkDir(fileHash);
-        const chunkPath = path.resolve(chunkDir, hash);
-
-        // 文件存在直接返回
-        // return if file is exists
-        if (fse.existsSync(filePath)) {
-            res.end("file exist");
-            return;
-        }
-
-        // 切片存在直接返回
-        // return if chunk is exists
-        if (fse.existsSync(chunkPath)) {
-            res.end("chunk exist");
-            return;
-        }
-
-        if (!fse.existsSync(chunkDir)) {
-            await fse.mkdirs(chunkDir);
-        }
-
-        // fs-extra 的 rename 方法 windows 平台会有权限问题
-        // @see https://github.com/meteor/meteor/issues/7852#issuecomment-255767835
-        await fse.move(chunk.path, path.resolve(chunkDir, hash));
-        res.end("received file chunk");
-    });
-});
-
-server.listen(5174, () => console.log("listening port 5174"));
+    }
+}
+export default Controller
